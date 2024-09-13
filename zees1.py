@@ -157,55 +157,36 @@ class Searches:
         baseDelay = Searches.baseDelay
         logging.debug(f"rootTerm={rootTerm}")
 
-        for i in range(self.maxRetries + 1):
-            if i != 0:
-                sleepTime: float
-                if Searches.retriesStrategy == Searches.retriesStrategy.EXPONENTIAL:
-                    sleepTime = baseDelay * 2 ** (i - 1)
-                elif Searches.retriesStrategy == Searches.retriesStrategy.CONSTANT:
-                    sleepTime = baseDelay
-                else:
-                    raise AssertionError
-                logging.debug(
-                    f"[BING] Search attempt not counted {i}/{Searches.maxRetries}, sleeping {sleepTime}"
-                    f" seconds..."
-                )
-                time.sleep(sleepTime)
-
-            searchbar: WebElement
-            for _ in range(1000):
-                searchbar = self.browser.utils.waitUntilClickable(
-                    By.ID, "sb_form_q", timeToWait=40
-                )
-                searchbar.clear()
-                term = next(termsCycle)
-                logging.debug(f"term={term}")
-                time.sleep(1)
-                self.human_like_typing(searchbar, term)
-                time.sleep(1)
-                with contextlib.suppress(TimeoutException):
-                    WebDriverWait(self.webdriver, 20).until(
-                        expected_conditions.text_to_be_present_in_element_value(
-                            (By.ID, "sb_form_q"), term
-                        )
+        searchbar: WebElement
+        for _ in range(1000):
+            searchbar = self.browser.utils.waitUntilClickable(
+                By.ID, "sb_form_q", timeToWait=40
+            )
+            searchbar.clear()
+            term = next(termsCycle)
+            logging.debug(f"term={term}")
+            time.sleep(1)
+            self.human_like_typing(searchbar, term)
+            time.sleep(1)
+            with contextlib.suppress(TimeoutException):
+                WebDriverWait(self.webdriver, 20).until(
+                    expected_conditions.text_to_be_present_in_element_value(
+                        (By.ID, "sb_form_q"), term
                     )
-                    break
-                logging.debug("error send_keys")
-            else:
-                # todo Still happens occasionally, gotta be a fix
-                raise TimeoutException
-            searchbar.submit()
+                )
+                break
+            logging.debug("error send_keys")
+        else:
+            # todo Still happens occasionally, gotta be a fix
+            raise TimeoutException
+        searchbar.submit()
 
-            pointsAfter = self.browser.utils.getAccountPoints()
-            if pointsBefore < pointsAfter:
-                del self.googleTrendsShelf[rootTerm]
-                self.googleTrendsShelf[rootTerm] = None
-                return
+        pointsAfter = self.browser.utils.getAccountPoints()
+        if pointsBefore < pointsAfter:
+            del self.googleTrendsShelf[rootTerm]
+            self.googleTrendsShelf[rootTerm] = None
+            return
 
-            # todo
-            # if i == (maxRetries / 2):
-            #     logging.info("[BING] " + "TIMED OUT GETTING NEW PROXY")
-            #     self.webdriver.proxy = self.browser.giveMeProxy()
         logging.error("[BING] Reached max search attempt retries")
 
         logging.debug("Moving passedInTerm to end of list")

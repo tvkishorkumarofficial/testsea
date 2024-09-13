@@ -1,3 +1,4 @@
+import contextlib
 import dbm.dumb
 import json
 import logging
@@ -10,10 +11,14 @@ from itertools import cycle
 from typing import Final
 
 import requests
+from selenium.common import TimeoutException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.support import expected_conditions
+from selenium.webdriver.support.wait import WebDriverWait
 
 from src.browser import Browser
-from src.utils import Utils, CONFIG
+from src.utils import Utils
 
 
 class RetriesStrategy(Enum):
@@ -32,16 +37,21 @@ class RetriesStrategy(Enum):
 
 
 class Searches:
-    maxRetries: Final[int] = CONFIG.get("retries").get("max")
+    config = Utils.loadConfig()
+    maxRetries: Final[int] = config.get("retries", {}).get("max", 8)
     """
     the max amount of retries to attempt
     """
-    baseDelay: Final[float] = CONFIG.get("retries").get("base_delay_in_seconds")
+    baseDelay: Final[float] = config.get("retries", {}).get(
+        "base_delay_in_seconds", 14.0625
+    )
     """
     how many seconds to delay
     """
     # retriesStrategy = Final[  # todo Figure why doesn't work with equality below
-    retriesStrategy = RetriesStrategy[CONFIG.get("retries").get("strategy")]
+    retriesStrategy = RetriesStrategy[
+        config.get("retries", {}).get("strategy", RetriesStrategy.CONSTANT.name)
+    ]
 
     def __init__(self, browser: Browser):
         self.browser = browser
@@ -70,7 +80,7 @@ class Searches:
             )
             assert (
                 r.status_code == requests.codes.ok
-            ), "Adjust retry config in src.utils.Utils.makeRequestsSession"
+            )  # todo Add guidance if assertion fails
             trends = json.loads(r.text[6:])
             for topic in trends["default"]["trendingSearchesDays"][0][
                 "trendingSearches"
@@ -98,6 +108,12 @@ class Searches:
             return [term]
         return relatedTerms
 
+    def human_like_typing(self, element: WebElement, text: str) -> None:
+        # Function to simulate human-like typing
+        for char in text:
+            element.send_keys(char)
+            time.sleep(random.uniform(0.05, 0.2))  # Random delay between keystrokes
+
     def bingSearches(self) -> None:
         # Function to perform Bing searches
         logging.info(
@@ -106,15 +122,11 @@ class Searches:
 
         self.browser.utils.goToSearch()
 
-        while True:
+        while (remainingSearches := self.browser.getRemainingSearches()) > 0:
+            logging.info(f"[BING] Remaining searches={remainingSearches}")
             desktopAndMobileRemaining = self.browser.getRemainingSearches(
                 desktopAndMobile=True
             )
-            logging.info(f"[BING] Remaining searches={desktopAndMobileRemaining}")
-            if (self.browser.browserType == "desktop" and desktopAndMobileRemaining.desktop == 0) \
-                    or (self.browser.browserType == "mobile" and desktopAndMobileRemaining.mobile == 0):
-                break
-
             if desktopAndMobileRemaining.getTotal() > len(self.googleTrendsShelf):
                 # self.googleTrendsShelf.clear()  # Maybe needed?
                 logging.debug(
@@ -127,9 +139,7 @@ class Searches:
                 logging.debug(
                     f"google_trends after load = {list(self.googleTrendsShelf.items())}"
                 )
-
             self.bingSearch()
-            del self.googleTrendsShelf[list(self.googleTrendsShelf.keys())[0]]
             time.sleep(random.randint(10, 15))
 
         logging.info(
@@ -147,7 +157,6 @@ class Searches:
         baseDelay = Searches.baseDelay
         logging.debug(f"rootTerm={rootTerm}")
 
-        # todo If first 3 searches of day, don't retry since points register differently, will be a bit quicker
         for i in range(self.maxRetries + 1):
             if i != 0:
                 sleepTime: float
@@ -157,26 +166,40 @@ class Searches:
                     sleepTime = baseDelay
                 else:
                     raise AssertionError
-                sleepTime += baseDelay * random.random()  # Add jitter
                 logging.debug(
                     f"[BING] Search attempt not counted {i}/{Searches.maxRetries}, sleeping {sleepTime}"
                     f" seconds..."
                 )
                 time.sleep(sleepTime)
 
-            searchbar = self.browser.utils.waitUntilClickable(
-                By.ID, "sb_form_q", timeToWait=40
-            )
-            searchbar.clear()
-            term = next(termsCycle)
-            logging.debug(f"term={term}")
-            time.sleep(1)
-            searchbar.send_keys(term)
-            time.sleep(1)
+            searchbar: WebElement
+            for _ in range(1000):
+                searchbar = self.browser.utils.waitUntilClickable(
+                    By.ID, "sb_form_q", timeToWait=40
+                )
+                searchbar.clear()
+                term = next(termsCycle)
+                logging.debug(f"term={term}")
+                time.sleep(1)
+                self.human_like_typing(searchbar, term)
+                time.sleep(1)
+                with contextlib.suppress(TimeoutException):
+                    WebDriverWait(self.webdriver, 20).until(
+                        expected_conditions.text_to_be_present_in_element_value(
+                            (By.ID, "sb_form_q"), term
+                        )
+                    )
+                    break
+                logging.debug("error send_keys")
+            else:
+                # todo Still happens occasionally, gotta be a fix
+                raise TimeoutException
             searchbar.submit()
 
             pointsAfter = self.browser.utils.getAccountPoints()
             if pointsBefore < pointsAfter:
+                del self.googleTrendsShelf[rootTerm]
+                self.googleTrendsShelf[rootTerm] = None
                 return
 
             # todo
@@ -184,3 +207,7 @@ class Searches:
             #     logging.info("[BING] " + "TIMED OUT GETTING NEW PROXY")
             #     self.webdriver.proxy = self.browser.giveMeProxy()
         logging.error("[BING] Reached max search attempt retries")
+
+        logging.debug("Moving passedInTerm to end of list")
+        del self.googleTrendsShelf[rootTerm]
+        self.googleTrendsShelf[rootTerm] = None

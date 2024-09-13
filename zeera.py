@@ -108,6 +108,12 @@ class Searches:
             return [term]
         return relatedTerms
 
+    def human_like_typing(self, element: WebElement, text: str) -> None:
+        # Function to simulate human-like typing
+        for char in text:
+            element.send_keys(char)
+            time.sleep(random.uniform(0.05, 0.2))  # Random delay between keystrokes
+
     def bingSearches(self) -> None:
         # Function to perform Bing searches
         logging.info(
@@ -175,7 +181,7 @@ class Searches:
                 term = next(termsCycle)
                 logging.debug(f"term={term}")
                 time.sleep(1)
-                searchbar.send_keys(term)
+                self.human_like_typing(searchbar, term)
                 time.sleep(1)
                 with contextlib.suppress(TimeoutException):
                     WebDriverWait(self.webdriver, 20).until(
@@ -193,6 +199,7 @@ class Searches:
             pointsAfter = self.browser.utils.getAccountPoints()
             if pointsBefore < pointsAfter:
                 del self.googleTrendsShelf[rootTerm]
+                self.googleTrendsShelf[rootTerm] = None
                 return
 
             # todo

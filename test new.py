@@ -175,7 +175,10 @@ class Searches:
                 term = next(termsCycle)
                 logging.debug(f"term={term}")
                 time.sleep(1)
-                searchbar.send_keys(term)
+                for char in term:
+                    searchbar.send_keys(char)
+                    delay = random.uniform(0.2, 1)
+                    time.sleep(delay)
                 time.sleep(1)
                 with contextlib.suppress(TimeoutException):
                     WebDriverWait(self.webdriver, 20).until(
